@@ -49,7 +49,7 @@ check_for_sshpass()
 {
     sshpass 2>&1 |
     grep -q '^Usage: sshpass ' ||
-    exit_with_error "password requested, sshpass not installed or not in path"
+    exit_with_error 2 "password requested, sshpass not installed or not in path"
 }
 
 while [ "$1" ]
