@@ -86,9 +86,6 @@ do
     esac
 done
 
-[ "$ssh_identity" -o "$ssh_password" ] ||
-    exit_with_error 1 "must supply either SSH identity, or password"
-
 ip="$1"
 case "$ip" in
     [0-9]*.[0-9]*.[0-9]*.[0-9]*)
@@ -100,6 +97,9 @@ case "$ip" in
         ;;
 esac
 shift
+
+[ "$ssh_identity" -o "$ssh_password" ] ||
+    exit_with_error 1 "must supply either SSH identity, or password"
 
 tmpdir=/tmp/ros-export-$$
 mkdir $tmpdir || exit 2
