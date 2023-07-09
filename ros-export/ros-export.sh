@@ -1,7 +1,5 @@
 #!/bin/bash
 
-#set -x
-
 usage_msg()
 {
     cat 1>&2 <<EOM-usage
@@ -17,8 +15,8 @@ EOM-usage
 
 exit_with_error()
 {
-    exit_code=$1
-    exit_message="$2"
+    local exit_code=$1
+    local exit_message="$2"
 
     echo >&2 "$0: Error: $exit_message"
     exit $exit_code
@@ -27,12 +25,12 @@ exit_with_error()
 ssh_user=admin
 ssh_password=
 ssh_identity=
-ssh_options="-o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new"
+ssh_options="-o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new"
 
 ros_ssh_cmd()
 {
-    ip_addr="$1"
-    ros_cmd="$2"
+    local ip_addr="$1"
+    local ros_cmd="$2"
 
     if [ "$ssh_identity" ]
     then
@@ -131,10 +129,14 @@ do
             fname="${fname}.rsc"
 
             echo >&2 "Exporting |$ip|$soft_id|$identity| ==> $export_dir/$fname"
-            ros_ssh_cmd $ip /export > "$export_dir/$fname"
+            ros_ssh_cmd $ip /export > "$tmpdir/$fname"
 
-            [ -s "$export_dir/$fname" ] ||
+            if [ -s "$tmpdir/$fname" ]
+            then
+                mv "$tmpdir/$fname" "$export_dir/$fname"
+            else
                 echo >&2 "Warning: zero sized export: $export_dir/$fname"
+            fi
             ;;
     esac
 done < $tmpdir/neighbours
