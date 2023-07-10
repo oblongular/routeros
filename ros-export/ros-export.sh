@@ -107,15 +107,53 @@ export_dir="../ros-exports"
 [ "$1" ] && export_dir="$1"
 [ -d "$export_dir" ] || mkdir "$export_dir" || exit 2
 
+#
+#  collect neighbour detail from one origin device
+#  convert neighbour detail into one file per device
+#
 ros_ssh_cmd $ip \
-    "/ip/neighbor/print proplist=address,software-id,identity" |
-tr -d '\r' > $tmpdir/neighbours
-
-while read n ip soft_id identity
+    "/ip/neighbor/print detail" > $tmpdir/n_detail
+#cat $tmpdir/n_detail
+awk -v RS='\r\n' '
+    /^ *[0-9][0-9]  */  { printf "%s", $0 }
+    /^ *  */            { printf "%s", $0 }
+    /^$/                { printf "\n" }
+' $tmpdir/n_detail > $tmpdir/n_detail_byline
+#cat $tmpdir/n_detail_byline
+n_dir=$tmpdir/n_dir
+mkdir $n_dir
+while read n params
 do
-    # Assumption: having a software-id field means "RouterOS" (vs SwitchOS)
-    case "$n,$soft_id" in
-        [1-9]*,????-????)
+    echo "$params" |
+    sed \
+        -e 's,^\s*[0-9][0-9]*\s*,,' \
+        -e 's,\s\s*\([^= ][^= ]*=\),\n\1,g' \
+    > $n_dir/$n
+done < $tmpdir/n_detail_byline
+
+neighbours=$tmpdir/neighbours
+# first, fake out a neighbour entry for the origin device
+n_ip4=$ip
+n_ident=$(
+    ros_ssh_cmd $n_ip4 \
+        ":put [/system/identity/get name]" |
+    tr -d '\r'
+)
+echo "$n_ip4 $n_ident" > $neighbours
+# pattern match discovered devices
+egrep -cri 'RouterOS|MikroTik|discovered-by=.*mndp' $n_dir |
+awk -F: '$2 != 0 { print $1 }' |
+while read f
+do
+    n_ip4=`sed -ne 's,^address4=,,p' $f`
+    n_ident=`sed -ne 's,^identity="\(.*\)",\1,p' $f`
+    echo "$n_ip4 $n_ident" >> $neighbours
+done
+
+while read ip identity
+do
+    case "$ip" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*)
 
             # map identity to a workable file name
             set -- $identity
@@ -128,8 +166,9 @@ do
             done
             fname="${fname}.rsc"
 
-            echo >&2 "Exporting |$ip|$soft_id|$identity| ==> $export_dir/$fname"
-            ros_ssh_cmd $ip /export > "$tmpdir/$fname"
+            echo >&2 "Exporting |$ip|$identity| ==> $export_dir/$fname"
+            ros_ssh_cmd $ip /export |
+            tr -d '\r'> "$tmpdir/$fname"
 
             if [ -s "$tmpdir/$fname" ]
             then
@@ -138,5 +177,9 @@ do
                 echo >&2 "Warning: zero sized export: $export_dir/$fname"
             fi
             ;;
+
+        *)
+            echo == Skipping "$ip|$identity"
+            ;;
     esac
-done < $tmpdir/neighbours
+done < $neighbours
