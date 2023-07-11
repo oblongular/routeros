@@ -22,6 +22,12 @@ exit_with_error()
     exit $exit_code
 }
 
+warn()
+{
+    local warn_message="$1"
+    echo >&2 "$0: Warning: $warn_message"
+}
+
 ssh_user=admin
 ssh_password=
 ssh_identity=
@@ -35,11 +41,20 @@ ros_ssh_cmd()
     if [ "$ssh_identity" ]
     then
         ssh -n -i ${ssh_identity} \
-            ${ssh_options} ${ssh_user}@${ip_addr} ${ros_cmd}
-    else
+            ${ssh_options} ${ssh_user}@${ip_addr} "${ros_cmd}"
+        return $?
+    fi
+    if [ "$ssh_password" ]
+    then
         echo $ssh_password |
         sshpass ssh \
-            ${ssh_options} ${ssh_user}@${ip_addr} ${ros_cmd}
+            ${ssh_options} ${ssh_user}@${ip_addr} "${ros_cmd}"
+        return $?
+    fi
+    if [ -S "$SSH_AUTH_SOCK" ]
+    then
+        ssh -n \
+            ${ssh_options} ${ssh_user}@${ip_addr} "${ros_cmd}"
     fi
 }
 
@@ -78,6 +93,11 @@ do
             shift
             continue
             ;;
+        -d)
+            discover_only=true
+            shift
+            continue
+            ;;
         *)
             break
             ;;
@@ -96,8 +116,8 @@ case "$ip" in
 esac
 shift
 
-[ "$ssh_identity" -o "$ssh_password" ] ||
-    exit_with_error 1 "must supply either SSH identity, or password"
+[ "$ssh_identity" -o "$ssh_password" -o -S "$SSH_AUTH_SOCK" ] ||
+    exit_with_error 1 "must supply either SSH identity, or password, or run ssh-agent" 
 
 tmpdir=/tmp/ros-export-$$
 mkdir $tmpdir || exit 2
@@ -147,13 +167,48 @@ while read f
 do
     n_ip4=`sed -ne 's,^address4=,,p' $f`
     n_ident=`sed -ne 's,^identity="\(.*\)",\1,p' $f`
-    echo "$n_ip4 $n_ident" >> $neighbours
+    if [ "$n_ip4" ]
+    then
+        echo "$n_ip4 $n_ident" >> $neighbours
+        echo "$n_ident" >> $tmpdir/n_has_ip4
+    else
+        echo "$n_ident" >> $tmpdir/n_hasno_ip4
+    fi
+done
+# warn about discovered devices we won't export from ...
+sort -u $tmpdir/n_hasno_ip4 |
+while read ident
+do
+    has_ip4=""
+    while read i4
+    do
+        [ "$i4" = "$ident" ] && has_ip4=true
+    done < $tmpdir/n_has_ip4
+    if [ "$has_ip4" ]
+    then
+        : all good, nothing to see here
+    else
+        warn "will not export device with no IP address: $ident"
+    fi
 done
 
+if [ "$discover_only" = true ]
+then
+    sort -k 2 $neighbours
+    exit
+fi
+
+sort -k 2 $neighbours |
 while read ip identity
 do
     case "$ip" in
+
         [0-9]*.[0-9]*.[0-9]*.[0-9]*)
+
+            device_serial=$(
+                ros_ssh_cmd 2>/dev/null $ip ':put [/system/routerboard/get serial-number]' |
+                tr -d '\r'
+            )
 
             # map identity to a workable file name
             set -- $identity
@@ -164,11 +219,11 @@ do
                 fname="${fname}_$1"
                 shift
             done
-            fname="${fname}.rsc"
+            fname="${fname}_${device_serial}.rsc"
 
-            echo >&2 "Exporting |$ip|$identity| ==> $export_dir/$fname"
+            echo >&2 "Exporting |$ip|$identity|$device_serial| ==> $export_dir/$fname"
             ros_ssh_cmd $ip /export |
-            tr -d '\r'> "$tmpdir/$fname"
+            tr -d '\r' > "$tmpdir/$fname"
 
             if [ -s "$tmpdir/$fname" ]
             then
@@ -182,4 +237,4 @@ do
             echo == Skipping "$ip|$identity"
             ;;
     esac
-done < $neighbours
+done
