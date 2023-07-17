@@ -175,7 +175,7 @@ do
         :put \"script file did not appear!\";\
     } else={                                ;\
         :local mycode [:parse [/file/get $ros_remotename contents]]             ;\
-        :do { \$mycode } on-error={:put \"script parse errror!\"}               ;\
+        :do { \$mycode } on-error={:put \"WARNING: *** script error ***\"}      ;\
         :execute {:delay 5; /file remove numbers=[find name=$ros_remotename]}   ;\
     } ;\
 }"
